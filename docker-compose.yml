@@ -1,0 +1,91 @@
+services:
+  php-fpm:
+    build:
+      context: docker/php-fpm8
+      args:
+        UID: "${CURRENT_UID}"
+        GID: "${CURRENT_UID}"
+    container_name: "${PROJECT_NAME}-php-fpm"
+    volumes:
+      - ./:/drupal
+      - ./docker/settings.local.php:/drupal/web/sites/default/settings.local.php
+      - ./docker/services.yml:/drupal/web/sites/default/services.yml
+    environment:
+      - SERVER_NAME=${PROJECT_NAME}-php.docker.localhost
+      - PHP_IDE_CONFIG=serverName=${PROJECT_NAME}-php.docker.localhost
+      - XDEBUG_SESSION=${PROJECT_NAME}-php.docker.localhost
+      - COMPOSER_MEMORY_LIMIT=-1
+      - DATABASE_NAME=drupal
+      - DATABASE_USER=drupal
+      - DATABASE_PASSWORD=drupal
+      - DATABASE_HOST=mariadb
+      - DATABASE_PORT=3306
+      - DRUSH_OPTIONS_URI=http://${PROJECT_NAME}-web.docker.localhost
+    links:
+      - mariadb
+    labels:
+      - "traefik.enable=false"
+    user: "${CURRENT_UID}:${CURRENT_UID}"
+    hostname: "${PROJECT_NAME}"
+    networks:
+      - default
+    extra_hosts:
+      - host.docker.internal:host-gateway
+
+  web-apache:
+    build:
+      context: docker/apache
+    container_name: "${PROJECT_NAME}-web-apache"
+    expose:
+      - '80'
+    volumes:
+      - ./:/drupal
+      - ./docker/apache/httpd.conf:/usr/local/apache2/conf/httpd.conf
+    environment:
+      - SERVER_NAME=${PROJECT_NAME}-web.docker.localhost
+    links:
+      - php-fpm
+    labels:
+      - "traefik.frontend.rule=Host:${PROJECT_NAME}-web.docker.localhost"
+    depends_on:
+      - reverse-proxy
+      - php-fpm
+    networks:
+      - default
+
+  mariadb:
+    image: mariadb:10.3
+    container_name: "${PROJECT_NAME}-mariadb"
+    environment:
+      MYSQL_ROOT_PASSWORD: 'password'
+      MYSQL_DATABASE: drupal
+      MYSQL_USER: drupal
+      MYSQL_PASSWORD: drupal
+    command: ['--character-set-server=utf8mb4', '--collation-server=utf8mb4_unicode_ci', '--default-authentication-plugin=mysql_native_password']
+    labels:
+      - "traefik.enable=false"
+    cap_add:
+      - SYS_NICE  # CAP_SYS_NICE
+    volumes:
+      - db:/var/lib/mysql
+    networks:
+      - default  
+
+  reverse-proxy:
+    image: traefik:v1.7 # The official Traefik docker image
+    container_name: "${PROJECT_NAME}-rp"
+    command: --api --docker # Enables the web UI and tells Traefik to listen to docker
+    ports:
+      - "80:80"
+      - "9090:8080" # The Web UI (enabled by --api)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      - "traefik.enable=false"
+
+volumes:
+  db:
+
+networks:
+  default:
+    name: ${PROJECT_NAME}-network
